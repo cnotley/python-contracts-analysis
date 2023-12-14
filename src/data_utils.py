@@ -1,90 +1,59 @@
-import os
-import json
+import pandas as pd
 from sklearn.model_selection import train_test_split
-from transformers import AutoTokenizer
+import random
+import nltk
+from nltk.corpus import wordnet
 
-def load_data(data_dir, tokenizer_name):
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
+
+def load_extracted_data(file_path):
     """
-    Loads contract data from a directory, tokenizes and preprocesses it.
+    Loads the data extracted and saved by text_extraction.py.
 
     Args:
-        data_dir: Path to the directory containing contract files.
-        tokenizer_name: Name of the pre-trained tokenizer to use.
+        file_path: Path to the CSV file containing extracted terms and labels.
 
     Returns:
-        A list of dictionaries where each dictionary represents a contract and contains the following keys:
-          - text: The tokenized and preprocessed text of the contract.
-          - label: The key terms extracted from the contract.
+        A DataFrame containing the terms and labels.
     """
-    data = []
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    return pd.read_csv(file_path)
 
-    for filename in os.listdir(data_dir):
-        filepath = os.path.join(data_dir, filename)
-        with open(filepath, encoding="utf-8") as f:
-            contract_data = json.load(f)
-            text = contract_data["text"]
-            tokenized_text = tokenizer(text, truncation=True, padding=True, return_tensors="pt")
-
-            data.append({
-                "text": tokenized_text,
-                "label": contract_data["label"]
-            })
-
-    return data
-
-def split_data(data, test_size=0.2):
+def augment_data(data, augmentation_factor=0.1):
     """
-    Splits data into training and test sets.
+    Augments the given data using synonym replacement.
 
     Args:
-        data: A list of dictionaries representing contracts.
-        test_size: The proportion of data to be used for testing.
+        data: The original data (DataFrame with 'term' and 'label' columns).
+        augmentation_factor: The proportion of data to augment.
 
     Returns:
-        A tuple containing two lists:
-          - train_data: Training data.
-          - test_data: Test data.
+        The augmented data as a DataFrame.
     """
-    train_data, test_data = train_test_split(data, test_size=test_size)
-    return train_data, test_data
-
-def get_labeled_data(data):
-    """
-    Extracts labeled data from a list of contracts.
-
-    Args:
-        data: A list of dictionaries representing contracts.
-
-    Returns:
-        A tuple containing two lists:
-          - texts: The texts of all contracts.
-          - labels: The corresponding key terms for each contract.
-    """
-    texts = [contract["text"] for contract in data]
-    labels = [contract["label"] for contract in data]
-    return texts, labels
-
-def get_unlabeled_data(data):
-    """
-    Extracts unlabeled data from a list of contracts.
-
-    Args:
-        data: A list of dictionaries representing contracts.
-
-    Returns:
-        A list of dictionaries containing the text of unlabeled contracts.
-    """
-    unlabeled_data = []
-    for contract in data:
-        if not contract["label"]:
-            unlabeled_data.append({"text": contract["text"]})
-    return unlabeled_data
-
-def augment_data(data, augmentation_function, num_augmented_per_original=2):
     augmented_data = []
-    for item in data:
-        augmented_texts = augmentation_function(item["text"], num_augmented_per_original)
-        for text in augmented_texts:
-            augmented_data.append({"text": text, "label": item["label"]})
-    return data + augmented_data
+    for _, row in data.iterrows():
+        term = row['term']
+        label = row['label']
+        words = nltk.word_tokenize(term)
+        num_words_to_augment = int(len(words) * augmentation_factor)
+        random_indices = random.sample(range(len(words)), num_words_to_augment)
+
+        for i in random_indices:
+            synonyms = wordnet.synsets(words[i])
+            if synonyms:
+                synonym = random.choice(synonyms).lemmas()[0].name()
+                words[i] = synonym
+
+        new_term = ' '.join(words)
+        augmented_data.append({'term': new_term, 'label': label})
+
+    augmented_df = pd.DataFrame(augmented_data)
+    return pd.concat([data, augmented_df], ignore_index=True)
+
+# Example usage
+if __name__ == "__main__":
+    extracted_data_file = 'data/extracted_terms.csv'
+    extracted_data = load_extracted_data(extracted_data_file)
+    augmented_data = augment_data(extracted_data)
+    augmented_data.to_csv('data/augmented_terms.csv', index=False)
+    print("Augmented data saved to data/augmented_terms.csv")

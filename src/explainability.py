@@ -1,65 +1,70 @@
+import shap
+import lime
 from lime import lime_text
-from shap import Explainer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
+import matplotlib.pyplot as plt
+import pandas as pd
 
-def get_lime_explanation(model, text, label, tokenizer):
-  """
-  Generates a LIME explanation for the model's prediction on a given text.
+def get_shap_explanation(model, tokenizer, text, label):
+    ''' Generates a SHAP explanation for the model's prediction on a given text.
+    
+    Args:
+      model: The trained model.
+      text: The text to explain.
+      label: The predicted label for the text.
+      tokenizer: The tokenizer used for preprocessing.
 
-  Args:
-    model: The trained model.
-    text: The text to explain.
-    label: The predicted label for the text.
-    tokenizer: The tokenizer used for preprocessing.
+    Returns:
+      SHAP explanation visualization.
+    '''
+    # Tokenize the input text and convert to tensor
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
 
-  Returns:
-    A list of tuples where each tuple contains a word and its importance score.
-  """
-  text_encoded = tokenizer(text, return_tensors="tf")
-  explainer = lime.lime_text.LimeTextExplainer(class_names=[str(label)])
-  explanation = explainer.explain_instance(text, model.predict, labels=[0, 1], num_samples=100)
+    # Create a SHAP explainer and get the shap values
+    explainer = shap.Explainer(model, tokenizer)
+    shap_values = explainer(inputs)
 
-  return explanation.as_list()
+    # Plot the shap values
+    shap.plots.text(shap_values[:,:,label])
 
-def get_shap_explanation(model, text, label, tokenizer):
-  """
-  Generates a SHAP explanation for the model's prediction on a given text.
+def get_lime_explanation(model, text, label, tokenizer_name):
+    ''' Generates a LIME explanation for the model's prediction on a given text.
 
-  Args:
-    model: The trained model.
-    text: The text to explain.
-    label: The predicted label for the text.
-    tokenizer: The tokenizer used for preprocessing.
+    Args:
+      model: The trained model.
+      text: The text to explain.
+      label: The predicted label for the text.
+      tokenizer_name: The name of the tokenizer used for preprocessing.
 
-  Returns:
-    A list of tuples where each tuple contains a word and its SHAP value.
-  """
-  text_encoded = tokenizer(text, return_tensors="tf")
-  explainer = shap.Explainer(model.predict, text_encoded)
-  shap_values = explainer([text_encoded])
+    Returns:
+      A list of tuples where each tuple contains a word and its corresponding weight in the decision process.
+    '''
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    
+    def predict_proba(texts):
+        tokens = tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
+        with torch.no_grad():
+            predictions = model(**tokens)
+        return predictions.logits.softmax(dim=-1).numpy()
 
-  word_importance = []
-  for i, word in enumerate(tokenizer.convert_ids_to_tokens(text_encoded['input_ids'][0])):
-    word_importance.append((word, shap_values[0][0, i]))
+    explainer = lime_text.LimeTextExplainer(class_names=[0, 1])
 
-  return word_importance
+    exp = explainer.explain_instance(text, predict_proba, num_features=10)
+    exp.show_in_notebook(text=True)
+    
+    return exp.as_list(label=label)
 
-def explain_prediction(model, text, label, tokenizer, explainer_type="lime"):
-  """
-  Provides an explanation for the model's prediction on a given text using LIME or SHAP.
-
-  Args:
-    model: The trained model.
-    text: The text to explain.
-    label: The predicted label for the text.
-    tokenizer: The tokenizer used for preprocessing.
-    explainer_type: The type of explainer to use ("lime" or "shap").
-
-  Returns:
-    A list of tuples where each tuple contains a word and its explanation importance score.
-  """
-  if explainer_type == "lime":
-    return get_lime_explanation(model, text, label, tokenizer)
-  elif explainer_type == "shap":
-    return get_shap_explanation(model, text, label, tokenizer)
-  else:
-    raise ValueError("Invalid explainer type:", explainer_type)
+if __name__ == "__main__":
+    model = AutoModelForSequenceClassification.from_pretrained("your-model-path")
+    tokenizer_name = "bert-base-uncased"
+    
+    data = pd.read_csv('data/extracted_terms.csv')
+    example_text = data['term'].iloc[0]
+    predicted_label = data['label'].iloc[0]
+    
+    # Get explanations
+    shap_explanation = get_shap_explanation(model, tokenizer, example_text, predicted_label)
+    lime_explanation = get_lime_explanation(model, example_text, predicted_label, tokenizer_name)

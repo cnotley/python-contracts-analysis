@@ -1,0 +1,10 @@
+tensorflow
+transformers
+nltk
+pandas
+scikit-learn
+PyMuPDF==1.18.19  # Ensure compatibility with your Python version
+shap
+lime
+matplotlib
+fitz
